@@ -112,7 +112,7 @@ class ZepterAPI {
             return {
                 purchaser_id: this.mockUserData.user_uuid,
                 amount: numAmount.toFixed(2),
-                discount_level: 'DL2',
+                discount_level: 'DL3',
                 parent_id: '123e4567-e89b-12d3-a456-426614174001',
                 parent_commission: (numAmount * 0.15).toFixed(2),
                 managerial_payouts: [
@@ -478,9 +478,18 @@ function Dashboard({ userId, onLogout }) {
         }
     };
 
+    const silentRefreshUserData = async () => {
+        try {
+            const data = await api.getUser(userId);
+            setUserData(data);
+        } catch (err) {
+            console.error('Silent refresh failed:', err);
+        }
+    };
+
     useEffect(() => {
         loadUserData();
-        const interval = setInterval(loadUserData, 30000); // Refresh every 30s
+        const interval = setInterval(silentRefreshUserData, 30000); // Refresh every 30s silently
         return () => clearInterval(interval);
     }, [userId]);
 
