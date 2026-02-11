@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { User, TrendingUp, Users, DollarSign, Award, LogOut, Activity, ChevronRight } from 'lucide-react';
+import { User, TrendingUp, Users, DollarSign, Award, LogOut, Activity, ChevronRight, ChevronDown } from 'lucide-react';
 
 import zepterLogo from './assets/logo.png';
 const API_BASE = 'http://127.0.0.1:8080';
@@ -17,6 +17,15 @@ const RANKS = {
 };
 
 const DISCOUNT_LEVELS = ['DL0', 'DL1', 'DL2', 'DL3', 'DL4', 'DL5', 'DL6', 'DL7', 'DL8', 'DL9', 'DL10'];
+
+const RANK_REQUIREMENTS = {
+    club_member: { personal_purchases: 10 },
+    junior_partner: { personal_purchases: 300, registered_members: 1 },
+    team_partner: { personal_purchases: 1000, registered_members: 3 },
+    senior_partner: { personal_purchases: 2000, registered_members: 5, group_l1_psv: 5000 },
+    division_partner: { personal_purchases: 5000, registered_members: 8, group_l1_psv: 15000 },
+    regional_partner: { personal_purchases: 10000, registered_members: 12, group_l1_psv: 30000 }
+};
 
 const calculateDiscountLevel = (userData) => {
     if (!userData) return 'DL0';
@@ -73,8 +82,48 @@ class ZepterAPI {
         current_month_psv: '456.00',
         last_month_psv: '345.00',
         group_volume: '8500.00',
-        last_activity_month: 202602
+        last_activity_month: 202602,
+        registered_members: 2,
+        group_l1_psv: 3200.00
     };
+
+    mockNetworkTree = {
+        id: '123e4567-e89b-12d3-a456-426614174000',
+        name: 'Admin User (You)',
+        rank: 'junior_partner',
+        personal_purchase_volume: 1234.00,
+        children: [
+            {
+                id: 'net-001', name: 'Maria Fischer', rank: 'club_member', personal_purchase_volume: 520.00,
+                children: [
+                    { id: 'net-004', name: 'Jonas Weber', rank: 'none', personal_purchase_volume: 85.00, children: [] },
+                    {
+                        id: 'net-005', name: 'Lisa Braun', rank: 'club_member', personal_purchase_volume: 210.00,
+                        children: [
+                            { id: 'net-008', name: 'Petra Schulz', rank: 'none', personal_purchase_volume: 45.00, children: [] }
+                        ]
+                    }
+                ]
+            },
+            {
+                id: 'net-002', name: 'Thomas Muller', rank: 'team_partner', personal_purchase_volume: 2100.00,
+                children: [
+                    { id: 'net-006', name: 'Anna Hoffman', rank: 'club_member', personal_purchase_volume: 340.00, children: [] },
+                    { id: 'net-007', name: 'Karl Becker', rank: 'none', personal_purchase_volume: 120.00, children: [] }
+                ]
+            },
+            { id: 'net-003', name: 'Elena Schmidt', rank: 'club_member', personal_purchase_volume: 650.00, children: [] }
+        ]
+    };
+
+    mockTransactionHistory = [
+        { id: 'tx-001', date: '2026-02-10T14:23:00Z', amount: 250.00, discount_level: 'DL2', parent_commission: 37.50, managerial_total: 17.50 },
+        { id: 'tx-002', date: '2026-02-08T09:15:00Z', amount: 180.00, discount_level: 'DL2', parent_commission: 27.00, managerial_total: 12.60 },
+        { id: 'tx-003', date: '2026-01-28T16:42:00Z', amount: 420.00, discount_level: 'DL3', parent_commission: 63.00, managerial_total: 29.40 },
+        { id: 'tx-004', date: '2026-01-15T11:30:00Z', amount: 95.00, discount_level: 'DL1', parent_commission: 14.25, managerial_total: 6.65 },
+        { id: 'tx-005', date: '2026-01-03T08:55:00Z', amount: 310.00, discount_level: 'DL3', parent_commission: 46.50, managerial_total: 21.70 },
+        { id: 'tx-006', date: '2025-12-20T13:10:00Z', amount: 150.00, discount_level: 'DL1', parent_commission: 22.50, managerial_total: 10.50 }
+    ];
 
     async getMockResponse(endpoint, options = {}) {
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -106,13 +155,14 @@ class ZepterAPI {
             const { amount } = JSON.parse(options.body);
             const numAmount = parseFloat(amount);
 
+            const dlBefore = calculateDiscountLevel(this.mockUserData);
             this.mockUserData.personal_purchase_volume = (parseFloat(this.mockUserData.personal_purchase_volume) + numAmount).toFixed(2);
             this.mockUserData.current_month_psv = (parseFloat(this.mockUserData.current_month_psv) + numAmount * 0.1).toFixed(2);
 
-            return {
+            const result = {
                 purchaser_id: this.mockUserData.user_uuid,
                 amount: numAmount.toFixed(2),
-                discount_level: 'DL3',
+                discount_level: dlBefore,
                 parent_id: '123e4567-e89b-12d3-a456-426614174001',
                 parent_commission: (numAmount * 0.15).toFixed(2),
                 managerial_payouts: [
@@ -120,6 +170,26 @@ class ZepterAPI {
                     { ancestor_id: '123e4567-e89b-12d3-a456-426614174003', depth: 2, amount: (numAmount * 0.02).toFixed(2) }
                 ]
             };
+
+            const managerialTotal = result.managerial_payouts.reduce((sum, p) => sum + parseFloat(p.amount), 0);
+            this.mockTransactionHistory.unshift({
+                id: 'tx-' + Date.now(),
+                date: new Date().toISOString(),
+                amount: numAmount,
+                discount_level: dlBefore,
+                parent_commission: parseFloat(result.parent_commission),
+                managerial_total: managerialTotal
+            });
+
+            return result;
+        }
+
+        if (endpoint.includes('/commission/network/')) {
+            return this.mockNetworkTree;
+        }
+
+        if (endpoint.includes('/commission/history/')) {
+            return { transactions: this.mockTransactionHistory };
         }
 
         return {};
@@ -176,6 +246,14 @@ class ZepterAPI {
 
     async recordTransaction(userId, amount) {
         return this.request('/commission/transaction', { method: 'POST', body: JSON.stringify({ user_uuid: userId, amount: String(amount) }) });
+    }
+
+    async getNetworkTree(userId) {
+        return this.request(`/commission/network/${userId}`);
+    }
+
+    async getTransactionHistory(userId) {
+        return this.request(`/commission/history/${userId}`);
     }
 
     logout() {
@@ -451,6 +529,70 @@ function LoginScreen({ onLogin }) {
     );
 }
 
+// Network Tree Node Component (recursive)
+function NetworkTreeNode({ node, depth = 0 }) {
+    const [expanded, setExpanded] = useState(depth < 1);
+    const hasChildren = node.children && node.children.length > 0;
+    const rankInfo = RANKS[node.rank] || RANKS.none;
+
+    return (
+        <div style={{ marginLeft: depth * 24 }}>
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '12px 16px',
+                    background: depth === 0 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                    border: `1px solid ${depth === 0 ? 'rgba(245, 158, 11, 0.3)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    borderRadius: '12px',
+                    marginBottom: '8px',
+                    cursor: hasChildren ? 'pointer' : 'default',
+                    transition: 'all 0.2s'
+                }}
+                onClick={() => hasChildren && setExpanded(!expanded)}
+            >
+                {hasChildren ? (
+                    expanded ? <ChevronDown size={16} color="#94A3B8" /> : <ChevronRight size={16} color="#94A3B8" />
+                ) : (
+                    <div style={{ width: 16 }} />
+                )}
+                <div style={{
+                    width: 32, height: 32, borderRadius: '8px',
+                    background: `${rankInfo.color}22`,
+                    border: `1px solid ${rankInfo.color}44`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0
+                }}>
+                    <User size={16} color={rankInfo.color} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#F8FAFC' }}>{node.name}</div>
+                    <div style={{ fontSize: '12px', color: '#64748B' }}>
+                        PPV: {formatCurrency(node.personal_purchase_volume)}
+                    </div>
+                </div>
+                <span style={{
+                    padding: '4px 10px',
+                    background: `${rankInfo.color}22`,
+                    border: `1px solid ${rankInfo.color}44`,
+                    borderRadius: '8px',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    color: rankInfo.color,
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0
+                }}>
+                    {rankInfo.label}
+                </span>
+            </div>
+            {expanded && hasChildren && node.children.map(child => (
+                <NetworkTreeNode key={child.id} node={child} depth={depth + 1} />
+            ))}
+        </div>
+    );
+}
+
 // Dashboard Main Component
 function Dashboard({ userId, onLogout }) {
     const [userData, setUserData] = useState(null);
@@ -461,8 +603,12 @@ function Dashboard({ userId, onLogout }) {
     const [txResult, setTxResult] = useState(null);
     const [txLoading, setTxLoading] = useState(false);
     const [txError, setTxError] = useState('');
+    const [networkTree, setNetworkTree] = useState(null);
+    const [networkLoading, setNetworkLoading] = useState(false);
+    const [transactionHistory, setTransactionHistory] = useState([]);
 
-    const api = new ZepterAPI();
+    const apiRef = useRef(new ZepterAPI());
+    const api = apiRef.current;
 
     const loadUserData = async () => {
         try {
@@ -489,9 +635,22 @@ function Dashboard({ userId, onLogout }) {
 
     useEffect(() => {
         loadUserData();
-        const interval = setInterval(silentRefreshUserData, 30000); // Refresh every 30s silently
+        api.getTransactionHistory(userId).then(data => {
+            setTransactionHistory(data.transactions || []);
+        });
+        const interval = setInterval(silentRefreshUserData, 30000);
         return () => clearInterval(interval);
     }, [userId]);
+
+    useEffect(() => {
+        if (activeTab === 'network' && !networkTree) {
+            setNetworkLoading(true);
+            api.getNetworkTree(userId).then(data => {
+                setNetworkTree(data);
+                setNetworkLoading(false);
+            }).catch(() => setNetworkLoading(false));
+        }
+    }, [activeTab]);
 
     const handleTransaction = async (e) => {
         e.preventDefault();
@@ -503,7 +662,9 @@ function Dashboard({ userId, onLogout }) {
             const result = await api.recordTransaction(userId, parseFloat(txAmount));
             setTxResult(result);
             setTxAmount('');
-            await loadUserData(); // Refresh user data
+            await loadUserData();
+            const histData = await api.getTransactionHistory(userId);
+            setTransactionHistory(histData.transactions || []);
         } catch (err) {
             setTxError(err.message);
         } finally {
@@ -627,8 +788,66 @@ function Dashboard({ userId, onLogout }) {
             fontFamily: '"IBM Plex Sans", -apple-system, sans-serif',
             color: '#F8FAFC'
         }}>
+            <style>{`
+                @media (max-width: 768px) {
+                    .zd-header {
+                        flex-direction: column !important;
+                        padding: 16px 20px !important;
+                        gap: 12px !important;
+                    }
+                    .zd-header-actions {
+                        width: 100%;
+                        justify-content: space-between !important;
+                    }
+                    .zd-main {
+                        padding: 20px 16px !important;
+                    }
+                    .zd-stats-grid {
+                        grid-template-columns: 1fr !important;
+                        gap: 16px !important;
+                    }
+                    .zd-tabs {
+                        overflow-x: auto;
+                        -webkit-overflow-scrolling: touch;
+                        flex-wrap: nowrap !important;
+                    }
+                    .zd-tabs button {
+                        flex: none !important;
+                        min-width: 120px;
+                        padding: 12px 16px !important;
+                        font-size: 13px !important;
+                    }
+                    .zd-card {
+                        padding: 24px !important;
+                    }
+                }
+                @media (max-width: 480px) {
+                    .zd-header-actions {
+                        flex-direction: column !important;
+                        gap: 8px !important;
+                    }
+                    .zd-stat-card {
+                        padding: 16px !important;
+                    }
+                    .zd-stat-value {
+                        font-size: 24px !important;
+                    }
+                    .zd-card {
+                        padding: 20px !important;
+                        border-radius: 16px !important;
+                    }
+                    .zd-tabs {
+                        padding: 4px !important;
+                    }
+                    .zd-tabs button {
+                        min-width: 100px;
+                        padding: 10px 12px !important;
+                        font-size: 12px !important;
+                    }
+                }
+            `}</style>
             {/* Header */}
-            <header style={{
+            <header className="zd-header" style={{
                 background: 'rgba(15, 23, 42, 0.8)',
                 backdropFilter: 'blur(20px)',
                 borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
@@ -651,7 +870,7 @@ function Dashboard({ userId, onLogout }) {
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div className="zd-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                     <div style={{
                         padding: '10px 20px',
                         background: `${rank.color}22`,
@@ -693,9 +912,9 @@ function Dashboard({ userId, onLogout }) {
             </header>
 
             {/* Main Content */}
-            <div style={{ padding: '40px' }}>
+            <div className="zd-main" style={{ padding: '40px' }}>
                 {/* Stats Cards */}
-                <div style={{
+                <div className="zd-stats-grid" style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
                     gap: '24px',
@@ -732,7 +951,7 @@ function Dashboard({ userId, onLogout }) {
                 </div>
 
                 {/* Tabs */}
-                <div style={{
+                <div className="zd-tabs" style={{
                     display: 'flex',
                     gap: '12px',
                     marginBottom: '32px',
@@ -741,7 +960,7 @@ function Dashboard({ userId, onLogout }) {
                     borderRadius: '16px',
                     border: '1px solid rgba(255, 255, 255, 0.1)'
                 }}>
-                    {['overview', 'transaction', 'performance'].map(tab => (
+                    {['overview', 'transaction', 'performance', 'network'].map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
@@ -801,7 +1020,7 @@ function Dashboard({ userId, onLogout }) {
                             </div>
                         </div>
 
-                        <div style={{
+                        <div className="zd-card" style={{
                             background: 'rgba(255, 255, 255, 0.03)',
                             backdropFilter: 'blur(20px)',
                             border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -846,7 +1065,8 @@ function Dashboard({ userId, onLogout }) {
                 )}
 
                 {activeTab === 'transaction' && (
-                    <div style={{
+                    <>
+                    <div className="zd-card" style={{
                         background: 'rgba(255, 255, 255, 0.03)',
                         backdropFilter: 'blur(20px)',
                         border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -1028,10 +1248,78 @@ function Dashboard({ userId, onLogout }) {
                             </div>
                         )}
                     </div>
+
+                    {/* Transaction History */}
+                    <div className="zd-card" style={{
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        backdropFilter: 'blur(20px)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '24px',
+                        padding: '32px',
+                        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3)',
+                        marginTop: '24px'
+                    }}>
+                        <h2 style={{ marginTop: 0, fontSize: '22px', fontWeight: '700', marginBottom: '20px' }}>
+                            Transaction History
+                        </h2>
+                        {transactionHistory.length === 0 ? (
+                            <p style={{ color: '#94A3B8' }}>No transactions yet.</p>
+                        ) : (
+                            <div className="zd-tab-content" style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '600px' }}>
+                                    <thead>
+                                        <tr>
+                                            {['Date', 'Amount', 'Discount', 'Parent Commission', 'Managerial Total'].map(h => (
+                                                <th key={h} style={{
+                                                    textAlign: 'left',
+                                                    padding: '12px 16px',
+                                                    color: '#94A3B8',
+                                                    fontSize: '12px',
+                                                    fontWeight: '600',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.05em',
+                                                    borderBottom: '1px solid rgba(255,255,255,0.1)'
+                                                }}>{h}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {transactionHistory.map(tx => (
+                                            <tr key={tx.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                                <td style={{ padding: '14px 16px', fontSize: '14px', color: '#CBD5E1', whiteSpace: 'nowrap' }}>
+                                                    {new Date(tx.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                </td>
+                                                <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#F8FAFC' }}>
+                                                    {formatCurrency(tx.amount)}
+                                                </td>
+                                                <td style={{ padding: '14px 16px' }}>
+                                                    <span style={{
+                                                        padding: '4px 10px',
+                                                        background: 'rgba(245,158,11,0.15)',
+                                                        borderRadius: '6px',
+                                                        fontSize: '12px',
+                                                        fontWeight: '700',
+                                                        color: '#F59E0B'
+                                                    }}>{tx.discount_level}</span>
+                                                </td>
+                                                <td style={{ padding: '14px 16px', fontSize: '14px', color: '#10B981', fontWeight: '600' }}>
+                                                    {formatCurrency(tx.parent_commission)}
+                                                </td>
+                                                <td style={{ padding: '14px 16px', fontSize: '14px', color: '#8B5CF6', fontWeight: '600' }}>
+                                                    {formatCurrency(tx.managerial_total)}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                    </>
                 )}
 
                 {activeTab === 'performance' && (
-                    <div style={{
+                    <div className="zd-card" style={{
                         background: 'rgba(255, 255, 255, 0.03)',
                         backdropFilter: 'blur(20px)',
                         border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -1105,6 +1393,119 @@ function Dashboard({ userId, onLogout }) {
                                 );
                             })}
                         </div>
+
+                        {/* Qualification Progress */}
+                        <div style={{ marginTop: '32px' }}>
+                            <h3 style={{ fontSize: '22px', fontWeight: '700', marginBottom: '20px', color: '#F8FAFC' }}>
+                                Qualification Progress
+                            </h3>
+                            {Object.entries(RANK_REQUIREMENTS)
+                                .filter(([key]) => {
+                                    const reqLevel = RANKS[key]?.level || 0;
+                                    return reqLevel > rank.level;
+                                })
+                                .map(([key, reqs], idx) => {
+                                    const rankInfo = RANKS[key];
+                                    const isNextRank = idx === 0;
+                                    const ppv = parseFloat(userData?.personal_purchase_volume || 0);
+                                    const members = userData?.registered_members || 0;
+                                    const groupPsv = parseFloat(userData?.group_l1_psv || userData?.group_volume || 0);
+
+                                    const requirements = [];
+                                    if (reqs.personal_purchases) {
+                                        const pct = Math.min(100, (ppv / reqs.personal_purchases) * 100);
+                                        requirements.push({ label: 'Personal Purchases', current: ppv, target: reqs.personal_purchases, pct, format: (v) => formatCurrency(v) });
+                                    }
+                                    if (reqs.registered_members) {
+                                        const pct = Math.min(100, (members / reqs.registered_members) * 100);
+                                        requirements.push({ label: 'Registered Members', current: members, target: reqs.registered_members, pct, format: (v) => String(v) });
+                                    }
+                                    if (reqs.group_l1_psv) {
+                                        const pct = Math.min(100, (groupPsv / reqs.group_l1_psv) * 100);
+                                        requirements.push({ label: 'Group L1 PSV', current: groupPsv, target: reqs.group_l1_psv, pct, format: (v) => formatCurrency(v) });
+                                    }
+
+                                    return (
+                                        <div key={key} style={{
+                                            padding: '24px',
+                                            background: isNextRank ? `${rankInfo.color}15` : 'rgba(255,255,255,0.03)',
+                                            border: `1px solid ${isNextRank ? rankInfo.color + '44' : 'rgba(255,255,255,0.08)'}`,
+                                            borderRadius: '16px',
+                                            marginBottom: '16px'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                    <Award size={20} color={rankInfo.color} />
+                                                    <span style={{ fontSize: '18px', fontWeight: '700', color: rankInfo.color }}>
+                                                        {rankInfo.label}
+                                                    </span>
+                                                </div>
+                                                {isNextRank && (
+                                                    <span style={{
+                                                        padding: '4px 12px',
+                                                        background: `${rankInfo.color}33`,
+                                                        border: `1px solid ${rankInfo.color}`,
+                                                        borderRadius: '8px',
+                                                        fontSize: '11px',
+                                                        fontWeight: '800',
+                                                        color: rankInfo.color,
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.05em'
+                                                    }}>
+                                                        Next Goal
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {requirements.map((req, rIdx) => (
+                                                <div key={rIdx} style={{ marginBottom: rIdx < requirements.length - 1 ? '12px' : 0 }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px', flexWrap: 'wrap', gap: '4px' }}>
+                                                        <span style={{ color: '#94A3B8' }}>{req.label}</span>
+                                                        <span style={{ color: '#CBD5E1', fontWeight: '600' }}>
+                                                            {req.format(req.current)} / {req.format(req.target)} ({Math.round(req.pct)}%)
+                                                        </span>
+                                                    </div>
+                                                    <div style={{
+                                                        height: '8px',
+                                                        background: 'rgba(255,255,255,0.1)',
+                                                        borderRadius: '4px',
+                                                        overflow: 'hidden'
+                                                    }}>
+                                                        <div style={{
+                                                            height: '100%',
+                                                            width: `${req.pct}%`,
+                                                            background: `linear-gradient(90deg, ${rankInfo.color}, ${rankInfo.color}CC)`,
+                                                            borderRadius: '4px',
+                                                            transition: 'width 0.5s ease'
+                                                        }} />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    );
+                                })}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'network' && (
+                    <div className="zd-card" style={{
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        backdropFilter: 'blur(20px)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '24px',
+                        padding: '32px',
+                        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3)'
+                    }}>
+                        <h2 style={{ marginTop: 0, fontSize: '28px', fontWeight: '700', marginBottom: '24px' }}>
+                            My Network
+                        </h2>
+                        {networkLoading ? (
+                            <p style={{ color: '#94A3B8' }}>Loading network...</p>
+                        ) : networkTree ? (
+                            <NetworkTreeNode node={networkTree} depth={0} />
+                        ) : (
+                            <p style={{ color: '#94A3B8' }}>No network data available.</p>
+                        )}
                     </div>
                 )}
             </div>
@@ -1115,7 +1516,7 @@ function Dashboard({ userId, onLogout }) {
 // Stat Card Component
 function StatCard({ icon, label, value, color, subtitle }) {
     return (
-        <div style={{
+        <div className="zd-stat-card" style={{
             background: 'rgba(255, 255, 255, 0.03)',
             backdropFilter: 'blur(20px)',
             border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -1148,7 +1549,7 @@ function StatCard({ icon, label, value, color, subtitle }) {
             <div style={{ fontSize: '14px', color: '#94A3B8', marginBottom: '8px', fontWeight: '500' }}>
                 {label}
             </div>
-            <div style={{ fontSize: '32px', fontWeight: '800', color: '#F8FAFC', marginBottom: '8px', letterSpacing: '-0.02em' }}>
+            <div className="zd-stat-value" style={{ fontSize: '32px', fontWeight: '800', color: '#F8FAFC', marginBottom: '8px', letterSpacing: '-0.02em' }}>
                 {value}
             </div>
             {subtitle && (
